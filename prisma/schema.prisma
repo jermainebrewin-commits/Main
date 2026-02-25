@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+// SQLite does not support native enums; Prisma maps these to String under the hood.
+
+// TransactionType governs the ledger classification of every record:
+//   INCOME   → money received (salary, dividends, freelance)
+//   EXPENSE  → money spent on daily operations (groceries, utilities, dining)
+//   TRANSFER → capital movement between assets (invest, pay credit card, CPF top-up)
+
+// AssetType classifies balance-sheet positions:
+//   CASH        → liquid bank / savings accounts
+//   INVESTMENT  → brokerage / unit trust / REITs
+//   CRYPTO      → digital assets
+//   PROPERTY    → real-estate market value
+//   CPF         → government provident fund (locked)
+//   DEBT        → credit card balances, loans (stored as positive, subtracted in Net Worth)
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model Category {
+  id            String   @id @default(cuid())
+  name          String   @unique
+
+  // TransactionType stored as String for SQLite compatibility
+  type          String   // "INCOME" | "EXPENSE" | "TRANSFER"
+
+  // The monthly budget target for this category (0 = unbudgeted)
+  targetBudget  Float    @default(0)
+
+  // Sinking Funds are future-provision categories (e.g. Travel, Annual Insurance).
+  // $0 spend = accrual. These are excluded from savings hero/villain lists.
+  isSinkingFund Boolean  @default(false)
+
+  transactions  Transaction[]
+}
+
+model Asset {
+  id          String   @id @default(cuid())
+  name        String   @unique
+
+  // AssetType stored as String for SQLite compatibility
+  type        String   // "CASH" | "INVESTMENT" | "CRYPTO" | "PROPERTY" | "CPF" | "DEBT"
+
+  // Current balance snapshot — updated manually via the Asset Ledger (Phase 3)
+  balance     Float    @default(0)
+
+  // Auto-updated whenever the record is modified
+  lastUpdated DateTime @updatedAt
+
+  // A TRANSFER transaction moves value FROM one asset TO another
+  transactionsFrom Transaction[] @relation("FromAsset")
+  transactionsTo   Transaction[] @relation("ToAsset")
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+
+  // Sign convention (critical for Net Sum Rule):
+  //   Outflows (expenses, transfers out)  → NEGATIVE amount  e.g. -120.50
+  //   Inflows  (income, refunds, credits) → POSITIVE amount  e.g. +5000.00
+  amount      Float
+
+  date        DateTime
+
+  // Mirrors Category.type — stored redundantly for fast query filtering
+  // without always joining Category
+  type        String   // "INCOME" | "EXPENSE" | "TRANSFER"
+
+  description String?
+
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+
+  // For TRANSFER transactions: which asset was debited
+  fromAssetId String?
+  fromAsset   Asset?   @relation("FromAsset", fields: [fromAssetId], references: [id])
+
+  // For TRANSFER transactions: which asset was credited
+  toAssetId   String?
+  toAsset     Asset?   @relation("ToAsset", fields: [toAssetId], references: [id])
+
+  createdAt   DateTime @default(now())
+}
